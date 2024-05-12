@@ -1,6 +1,7 @@
 #include <boost/asio/ts/buffer.hpp>
 #include <boost/asio/ts/internet.hpp>
 #include <iostream>
+#include <random>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,16 +19,22 @@ uint8_t array1[160] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 uint8_t unused2[64];
 uint8_t array2[256 * 512];
 
-char *secret = "The Magic Words are Squeamish Ossifrage.";
+std::array secret = std::to_array("super secret password 1234!");
 
-int spectreResults[256];
-int myResults[256];
+uint32_t myResults;
 
 // Classic Spectre gadget
-void victim_function(size_t x) {
+void __attribute__((noinline)) leak_gadget(size_t x) {
   if (x < array1_size) {
     asm volatile("" : : "r"(array2[array1[x] * 512]));
   }
+}
+
+// Classic Spectre gadget
+void __attribute__((noinline)) transmit_gadget(size_t x) {
+  // Uses the flag for some computational reason
+  uint8_t *addr = &array2[x * 512];
+  { asm volatile(R"(mov (%0), %%eax)" : : "r"(addr) : "eax", "memory"); }
 }
 
 class session : public std::enable_shared_from_this<session> {
@@ -60,49 +67,34 @@ private:
     auto self(shared_from_this());
 
     // Netspectre gadget
-    uint64_t elapsed;
-    if (length == sizeof(uint64_t)) {
-      for (int i = 0; i < 256; i++) {
-        myResults[i] = 0;
-      }
-
+    if (length == sizeof(uint64_t) * 2) {
       uint64_t a;
       std::memcpy(&a, buffer, sizeof(a));
-      std::cout << "Reading at malicious_x = " << a << std::endl;
 
+      // This is purely for convenience, so we did not have to make a reset
+      // mechanism based on downloads.
 #pragma GCC unroll 1
       for (int i = 0; i < 256; i++) {
         _mm_clflush(&array2[i * 512]);
       }
-
       _mm_clflush(&array1_size);
+      _mm_clflush(&myResults);
+      _mm_mfence();
 
-#pragma GCC unroll 1
-      for (int z = 0; z < 100; z++) {
-        asm volatile("nop" : : : "memory");
-      }
+      // Spectre gadget
+      leak_gadget(a);
 
-      victim_function(a);
-
-#pragma GCC unroll 1
-      for (int i = 0; i < 256; i++) {
-        int mix_i = ((i * 167) + 13) & 255;
-        uint8_t *addr = &array2[mix_i * 512];
-        uint32_t time1;
-        uint32_t time2;
-        {
-          uint32_t tmp;
-          asm volatile(R"(rdtscp
-mov %%eax, %0
-mov (%2), %%edx
-rdtscp
-mov %%eax, %1)"
-                       : "=&r"(time1), "=&r"(time2)
-                       : "r"(addr)
-                       : "eax", "edx", "ecx", "memory");
-        }
-        myResults[mix_i] = time2 - time1;
-      }
+      // Transmission gadget. We compute the latency here as if we do this on
+      // the client we'd need to sample way too much.
+      std::chrono::high_resolution_clock::time_point start, end;
+      start = std::chrono::high_resolution_clock::now();
+      uint64_t b;
+      std::memcpy(&b, buffer + sizeof(uint64_t), sizeof(b));
+      transmit_gadget(b);
+      end = std::chrono::high_resolution_clock::now();
+      myResults =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+              .count();
     }
 
     boost::asio::async_write(
@@ -144,10 +136,17 @@ private:
 
 int main(int argc, const char **argv) {
   try {
-    size_t malicious_x =
-        (size_t)(secret - (char *)array1); /* default for malicious_x */
+    size_t malicious_x = (size_t)((char *)&secret -
+                                  (char *)array1); /* default for malicious_x */
     int i, score[2], len = 40;
     std::cout << "malicious_x: " << malicious_x << std::endl;
+
+    std::random_device random{};
+    // Setup array1 so it has random values
+    // for (i = 0; i < sizeof(array1); i++)
+    // array1[i] =
+    // random() %
+    // 256; /* write to array1 so in RAM not copy-on-write zero pages */
 
     uint8_t value[2];
 

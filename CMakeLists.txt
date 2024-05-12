@@ -6,17 +6,17 @@ set(CMAKE_TOOLCHAIN_FILE
 project(netspectre-ma)
 
 # Find dependencies provided by vcpkg (via vcpkg.cmake)
+find_package(Boost REQUIRED COMPONENTS asio)
 
 # main target
 add_executable(service)
-target_sources(main PRIVATE src/service.cpp)
-target_link_libraries(main PRIVATE unofficial::sqlite3::sqlite3 fmt::fmt-header-only)
-set_property(TARGET main PROPERTY CXX_STANDARD 23)
+target_sources(service PRIVATE src/service.cpp)
+target_link_libraries(service PRIVATE Boost::asio)
+set_property(TARGET service PROPERTY CXX_STANDARD 23)
 
 # tests target
-add_executable(tests)
-target_sources(tests PRIVATE src/test.cpp)
-target_link_libraries(tests PRIVATE unofficial::sqlite3::sqlite3 fmt::fmt-header-only)
-set_property(TARGET tests PROPERTY CXX_STANDARD 23)
-enable_testing()
-add_test(tests tests)
+add_executable(attacker)
+target_sources(attacker PRIVATE src/attacker.cpp)
+target_link_libraries(attacker PRIVATE Boost::asio)
+set_property(TARGET attacker PROPERTY CXX_STANDARD 23)
+

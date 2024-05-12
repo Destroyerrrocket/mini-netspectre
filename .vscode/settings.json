@@ -1,0 +1,15 @@
+{
+	"clangd.arguments": [
+		"--header-insertion=never",
+		"--all-scopes-completion",
+		"--background-index",
+		"--fallback-style=\"DisableFormat: true\"",
+		"--suggest-missing-includes",
+		"--log=verbose",
+		"--compile-commands-dir=/home/pol/Documentos/Uni/AM/netspectre/build"
+	],
+	"editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+	"editor.formatOnPaste": true,
+	"editor.formatOnSave": true,
+	"editor.formatOnType": true,
+}

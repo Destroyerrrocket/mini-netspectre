@@ -10,16 +10,13 @@
 
 using boost::asio::ip::tcp;
 
-/********************************************************************
-Victim code.
-********************************************************************/
 unsigned int array1_size = 16;
 uint8_t unused1[64];
 uint8_t array1[160] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 uint8_t unused2[64];
 uint8_t array2[256 * 512];
 
-std::array secret = std::to_array("super secret password 1234!");
+std::array secret = std::to_array("This is a secret password!");
 
 uint32_t myResults;
 
@@ -30,11 +27,22 @@ void __attribute__((noinline)) leak_gadget(size_t x) {
   }
 }
 
-// Classic Spectre gadget
-void __attribute__((noinline)) transmit_gadget(size_t x) {
-  // Uses the flag for some computational reason
+// Accesses our 'flag' based on user controlled input
+void __attribute__((noinline)) transmit_gadget(uint8_t x) {
   uint8_t *addr = &array2[x * 512];
   { asm volatile(R"(mov (%0), %%eax)" : : "r"(addr) : "eax", "memory"); }
+}
+
+void __attribute__((noinline)) reset_gadget() {
+  // This is purely for convenience, so we did not have to make a reset
+  // mechanism based on downloads like the paper.
+#pragma GCC unroll 1
+  for (int i = 0; i < 256; i++) {
+    _mm_clflush(&array2[i * 512]);
+  }
+  _mm_clflush(&array1_size);
+  _mm_clflush(&myResults);
+  _mm_mfence();
 }
 
 class session : public std::enable_shared_from_this<session> {
@@ -71,21 +79,12 @@ private:
       uint64_t a;
       std::memcpy(&a, buffer, sizeof(a));
 
-      // This is purely for convenience, so we did not have to make a reset
-      // mechanism based on downloads.
-#pragma GCC unroll 1
-      for (int i = 0; i < 256; i++) {
-        _mm_clflush(&array2[i * 512]);
-      }
-      _mm_clflush(&array1_size);
-      _mm_clflush(&myResults);
-      _mm_mfence();
+      reset_gadget();
 
-      // Spectre gadget
       leak_gadget(a);
 
-      // Transmission gadget. We compute the latency here as if we do this on
-      // the client we'd need to sample way too much.
+      // We compute the latency here as if we do this on
+      // the client we'd need to sample for too much time.
       std::chrono::high_resolution_clock::time_point start, end;
       start = std::chrono::high_resolution_clock::now();
       uint64_t b;
@@ -138,19 +137,9 @@ int main(int argc, const char **argv) {
   try {
     size_t malicious_x = (size_t)((char *)&secret -
                                   (char *)array1); /* default for malicious_x */
-    int i, score[2], len = 40;
     std::cout << "malicious_x: " << malicious_x << std::endl;
 
-    std::random_device random{};
-    // Setup array1 so it has random values
-    // for (i = 0; i < sizeof(array1); i++)
-    // array1[i] =
-    // random() %
-    // 256; /* write to array1 so in RAM not copy-on-write zero pages */
-
-    uint8_t value[2];
-
-    for (i = 0; i < sizeof(array2); i++)
+    for (int i = 0; i < sizeof(array2); i++)
       array2[i] = 1;
 
     boost::asio::io_context io_context;

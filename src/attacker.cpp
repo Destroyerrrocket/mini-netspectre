@@ -86,7 +86,7 @@ char getRemoteResult(tcp::socket &s, uint64_t samplePoint, size_t waitTime,
       /*if (byteTested == 'f') {
         std::cout << "F: " << localTimes << "\n";
       }*/
-      if (localTimes < 120) {
+      if (localTimes < 50) {
         scores[byteTested] += 1;
       }
       // std::this_thread::sleep_for(std::chrono::milliseconds(waitTime));
@@ -173,7 +173,7 @@ int main(int argc, char *argv[]) {
 
     std::string result;
     // Numbers chosen so we only look at the secret string
-    for (uint64_t i = 160u; i < 160u + 41; i++) {
+    for (uint64_t i = 160u; i < 160u + 27u; i++) {
       result.push_back(getRemoteResult(s, i, waitTime, numSamples));
     }
     std::cout << "Result: " << result << "\n";
